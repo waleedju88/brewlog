@@ -11,17 +11,17 @@
   display: flex;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+  padding: 10px 0 max(10px, env(safe-area-inset-bottom));
 }
 .link, .linkActive {
   flex: 1; display: flex; flex-direction: column;
-  align-items: center; gap: 3px;
+  align-items: center; gap: 5px;
   text-decoration: none;
   padding: 6px 4px;
-  border-radius: 12px;
   transition: var(--transition);
 }
-.link { color: var(--muted); }
+.link  { color: #5a3a20; }
 .linkActive { color: var(--gold-light); }
-.icon { font-size: 22px; line-height: 1; }
-.navLabel { font-size: 11px; font-weight: 600; letter-spacing: 0.3px; }
+.link svg, .linkActive svg { transition: var(--transition); }
+.linkActive svg { filter: drop-shadow(0 0 6px rgba(200,130,60,0.4)); }
+.navLabel { font-size: 10px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; }
