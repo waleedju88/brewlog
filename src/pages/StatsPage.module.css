@@ -1,0 +1,40 @@
+.page { padding: 56px 24px 24px; }
+.header { margin-bottom: 28px; }
+.sub { font-size: 13px; color: var(--muted); letter-spacing: 0.5px; margin-bottom: 4px; }
+.title { font-family: var(--font-display); font-size: 38px; font-weight: 700; color: var(--gold-light); line-height: 1; }
+
+.grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 10px; margin-bottom: 32px;
+}
+.statCard {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; padding: 18px 14px;
+  text-align: center;
+}
+.statIcon { font-size: 22px; display: block; margin-bottom: 8px; }
+.statValue {
+  font-family: var(--font-display);
+  font-size: 34px; font-weight: 700;
+  color: var(--gold-light); line-height: 1;
+  margin-bottom: 4px;
+}
+.statLabel { font-size: 12px; color: var(--muted); font-weight: 500; }
+
+.badgeSection {}
+.sectionTitle {
+  font-family: var(--font-display);
+  font-size: 26px; color: var(--cream);
+  margin-bottom: 12px;
+}
+.badgeSub { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; margin-bottom: 10px; }
+
+.badgeGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.badge {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 16px 12px; text-align: center;
+}
+.badgeLocked { opacity: 0.5; }
+.badgeIcon { font-size: 28px; display: block; margin-bottom: 8px; }
+.badgeName { font-size: 13px; font-weight: 700; color: var(--cream); margin-bottom: 3px; }
+.badgeDesc { font-size: 11px; color: var(--muted); line-height: 1.4; }
