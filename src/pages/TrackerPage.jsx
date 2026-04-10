@@ -2,13 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import s from './TrackerPage.module.css'
 
-function localDayBounds() {
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-  const end   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
-  return { start: start.toISOString(), end: end.toISOString() }
-}
-
 function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
@@ -16,32 +9,44 @@ function formatTime(iso) {
 export default function TrackerPage({ session }) {
   const userId = session.user.id
 
-  const [limit, setLimit]       = useState(null)
-  const [todayCups, setTodayCups] = useState([]) // array of {id, logged_at}
+  const [budget, setBudget]     = useState(null)  // total budget
+  const [totalDrank, setTotalDrank] = useState(0) // all-time cups logged
+  const [todayCups, setTodayCups]   = useState([])// today's cups [{id, logged_at}]
   const [loading, setLoading]   = useState(true)
   const [popping, setPopping]   = useState(false)
-  const [settingLimit, setSettingLimit] = useState(false)
-  const [limitInput, setLimitInput]     = useState('')
+  const [showSetup, setShowSetup] = useState(false)
+  const [budgetInput, setBudgetInput] = useState('')
+  const [saving, setSaving]     = useState(false)
 
-  const drank     = todayCups.length
-  const remaining = limit !== null ? Math.max(limit - drank, 0) : null
-  const isDone    = limit !== null && remaining === 0
+  const remaining = budget !== null ? Math.max(budget - totalDrank, 0) : null
+  const isDone    = budget !== null && remaining === 0
+  const pct       = budget > 0 ? Math.min((totalDrank / budget) * 100, 100) : 0
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data: profile } = await supabase
-      .from('profiles').select('daily_limit').eq('id', userId).single()
-    setLimit(profile?.daily_limit ?? null)
 
-    const { start, end } = localDayBounds()
-    const { data: cups } = await supabase
-      .from('cup_logs')
-      .select('id, logged_at')
+    // Load profile
+    const { data: profile } = await supabase
+      .from('profiles').select('cup_budget').eq('id', userId).single()
+    setBudget(profile?.cup_budget ?? null)
+
+    // Total cups ever
+    const { count } = await supabase
+      .from('cup_logs').select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
-      .gte('logged_at', start)
-      .lte('logged_at', end)
+    setTotalDrank(count || 0)
+
+    // Today's cups
+    const now = new Date()
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).toISOString()
+    const end   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString()
+    const { data: cups } = await supabase
+      .from('cup_logs').select('id, logged_at')
+      .eq('user_id', userId)
+      .gte('logged_at', start).lte('logged_at', end)
       .order('logged_at', { ascending: false })
     setTodayCups(cups || [])
+
     setLoading(false)
   }, [userId])
 
@@ -50,11 +55,10 @@ export default function TrackerPage({ session }) {
   async function handleDrink() {
     if (isDone) return
     const { data } = await supabase
-      .from('cup_logs')
-      .insert({ user_id: userId })
-      .select('id, logged_at')
-      .single()
+      .from('cup_logs').insert({ user_id: userId })
+      .select('id, logged_at').single()
     if (data) {
+      setTotalDrank(d => d + 1)
       setTodayCups(prev => [data, ...prev])
       setPopping(true)
       setTimeout(() => setPopping(false), 400)
@@ -65,19 +69,32 @@ export default function TrackerPage({ session }) {
     if (todayCups.length === 0) return
     const last = todayCups[0]
     await supabase.from('cup_logs').delete().eq('id', last.id)
+    setTotalDrank(d => Math.max(d - 1, 0))
     setTodayCups(prev => prev.slice(1))
   }
 
-  async function handleSetLimit() {
-    const n = parseInt(limitInput)
+  async function handleSaveBudget() {
+    const n = parseInt(budgetInput)
     if (isNaN(n) || n < 1) return
-    await supabase.from('profiles').upsert({ id: userId, daily_limit: n })
-    setLimit(n)
-    setSettingLimit(false)
-    setLimitInput('')
+    setSaving(true)
+    await supabase.from('profiles').upsert({ id: userId, cup_budget: n })
+    setBudget(n)
+    setSaving(false)
+    setShowSetup(false)
+    setBudgetInput('')
   }
 
   if (loading) return <PageLoader />
+
+  // First time — no budget set yet
+  if (budget === null) {
+    return <SetupScreen
+      budgetInput={budgetInput}
+      setBudgetInput={setBudgetInput}
+      onSave={handleSaveBudget}
+      saving={saving}
+    />
+  }
 
   return (
     <div className={s.page}>
@@ -86,52 +103,47 @@ export default function TrackerPage({ session }) {
         <p className={s.dateLabel}>
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
-        <h1 className={s.title}>Today's Brew</h1>
+        <h1 className={s.title}>BrewLog</h1>
       </div>
 
-      {/* Cup grid */}
-      {limit !== null && (
-        <div className={s.cupGrid + ' fade-up-2'}>
-          {Array.from({ length: limit }).map((_, i) => (
-            <span key={i} className={i < drank ? s.cupDone : s.cupFresh}>☕</span>
-          ))}
-        </div>
-      )}
-
-      {/* Big counter */}
+      {/* Big countdown */}
       <div className={s.counterBox + ' fade-up-2'}>
         <span
           className={s.bigNum + (popping ? ' ' + s.pop : '')}
-          style={{ color: isDone ? 'var(--red)' : 'var(--gold-light)' }}
+          style={{ color: isDone ? 'var(--red)' : remaining <= 5 ? '#e67e22' : 'var(--gold-light)' }}
         >
-          {limit !== null ? remaining : drank}
+          {remaining}
         </span>
         <p className={s.counterLabel}>
-          {limit !== null
-            ? isDone ? 'limit reached' : remaining === 1 ? 'cup remaining' : 'cups remaining'
-            : drank === 1 ? 'cup today' : 'cups today'}
+          {isDone
+            ? 'budget reached!'
+            : remaining === 1 ? 'cup remaining in budget'
+            : 'cups remaining in budget'}
         </p>
+        <p className={s.subLabel}>{totalDrank} of {budget} cups used</p>
       </div>
 
-      {/* Progress bar */}
-      {limit !== null && (
-        <div className={s.barWrap + ' fade-up-3'}>
-          <div className={s.barTrack}>
-            <div className={s.barFill} style={{
-              width: `${Math.min((drank / limit) * 100, 100)}%`,
-              background: isDone
-                ? 'linear-gradient(90deg,var(--red),#922b21)'
-                : 'linear-gradient(90deg,var(--gold),#7b4a1e)'
-            }} />
-          </div>
-          <p className={s.progressText}>{drank} of {limit} cups</p>
+      {/* Progress arc / bar */}
+      <div className={s.barWrap + ' fade-up-2'}>
+        <div className={s.barTrack}>
+          <div className={s.barFill} style={{
+            width: `${pct}%`,
+            background: isDone
+              ? 'linear-gradient(90deg,var(--red),#922b21)'
+              : pct > 80
+              ? 'linear-gradient(90deg,#e67e22,#d35400)'
+              : 'linear-gradient(90deg,var(--gold),#7b4a1e)'
+          }} />
         </div>
-      )}
+        <div className={s.barLabels}>
+          <span>0</span><span>{budget}</span>
+        </div>
+      </div>
 
-      {/* Today's timeline */}
+      {/* Today's log */}
       {todayCups.length > 0 && (
         <div className={s.timeline + ' fade-up-3'}>
-          <p className={s.timelineTitle}>Today's log</p>
+          <p className={s.timelineTitle}>Today's cups</p>
           {todayCups.map((cup, i) => (
             <div key={cup.id} className={s.timelineRow}>
               <span className={s.timelineCup}>☕</span>
@@ -144,50 +156,91 @@ export default function TrackerPage({ session }) {
 
       {/* Actions */}
       <div className={s.actions + ' fade-up-4'}>
-        {!isDone || limit === null ? (
+        {!isDone ? (
           <button className={s.drinkBtn} onClick={handleDrink}>☕ I drank a cup</button>
         ) : (
           <div className={s.doneBox}>
-            <p className={s.doneText}>🚫 Daily limit reached!</p>
+            <p className={s.doneEmoji}>🏁</p>
+            <p className={s.doneText}>You've finished your budget of {budget} cups!</p>
+            <button className={s.newBudgetBtn} onClick={() => { setBudgetInput(''); setShowSetup(true) }}>
+              Set a new budget
+            </button>
           </div>
         )}
 
-        {drank > 0 && (
+        {todayCups.length > 0 && !isDone && (
           <button className={s.undoBtn} onClick={handleUndo}>↩ Undo last cup</button>
         )}
 
-        <button className={s.limitBtn} onClick={() => setSettingLimit(true)}>
-          {limit !== null ? `⚙ Change limit (${limit})` : '⚙ Set daily limit'}
-        </button>
+        {!isDone && (
+          <button className={s.limitBtn} onClick={() => { setBudgetInput(String(budget)); setShowSetup(true) }}>
+            ⚙ Change budget ({budget})
+          </button>
+        )}
       </div>
 
-      {/* Limit modal */}
-      {settingLimit && (
-        <div className={s.overlay} onClick={() => setSettingLimit(false)}>
+      {/* Budget modal */}
+      {showSetup && (
+        <div className={s.overlay} onClick={() => setShowSetup(false)}>
           <div className={s.modal} onClick={e => e.stopPropagation()}>
-            <h2 className={s.modalTitle}>Set Daily Limit</h2>
+            <h2 className={s.modalTitle}>Set Cup Budget</h2>
+            <p className={s.modalHint}>How many cups total do you want to track?</p>
             <div className={s.quickRow}>
-              {[2, 3, 4, 5, 6].map(n => (
-                <button
-                  key={n} className={s.quickBtn}
-                  onClick={() => setLimitInput(String(n))}
+              {[20, 30, 50, 100].map(n => (
+                <button key={n} className={s.quickBtn}
+                  onClick={() => setBudgetInput(String(n))}
                   style={{
-                    borderColor: limitInput === String(n) ? 'var(--gold)' : undefined,
-                    color: limitInput === String(n) ? 'var(--gold-light)' : undefined
+                    borderColor: budgetInput === String(n) ? 'var(--gold)' : undefined,
+                    color: budgetInput === String(n) ? 'var(--gold-light)' : undefined
                   }}
                 >{n}</button>
               ))}
             </div>
             <input
-              className={s.modalInput} type="number" min="1" placeholder="Custom number…"
-              value={limitInput} onChange={e => setLimitInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSetLimit()}
+              className={s.modalInput} type="number" min="1"
+              placeholder="Or type any number…"
+              value={budgetInput} onChange={e => setBudgetInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSaveBudget()}
             />
-            <button className={s.modalBtn} onClick={handleSetLimit}>Save</button>
-            <button className={s.modalCancel} onClick={() => setSettingLimit(false)}>Cancel</button>
+            <button className={s.modalBtn} onClick={handleSaveBudget} disabled={saving}>
+              {saving ? '…' : 'Save Budget'}
+            </button>
+            <button className={s.modalCancel} onClick={() => setShowSetup(false)}>Cancel</button>
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function SetupScreen({ budgetInput, setBudgetInput, onSave, saving }) {
+  return (
+    <div className={s.setupPage}>
+      <div className={s.setupCard}>
+        <span className={s.setupEmoji}>☕</span>
+        <h1 className={s.setupTitle}>Welcome to BrewLog</h1>
+        <p className={s.setupHint}>Set your total cup budget to get started. Every cup you log will count down from this number.</p>
+        <div className={s.quickRow} style={{ justifyContent: 'center', marginBottom: 16 }}>
+          {[20, 30, 50, 100].map(n => (
+            <button key={n} className={s.quickBtn}
+              onClick={() => setBudgetInput(String(n))}
+              style={{
+                borderColor: budgetInput === String(n) ? 'var(--gold)' : undefined,
+                color: budgetInput === String(n) ? 'var(--gold-light)' : undefined
+              }}
+            >{n}</button>
+          ))}
+        </div>
+        <input
+          className={s.modalInput} type="number" min="1"
+          placeholder="Or type any number…"
+          value={budgetInput} onChange={e => setBudgetInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && onSave()}
+        />
+        <button className={s.modalBtn} onClick={onSave} disabled={saving || !budgetInput}>
+          {saving ? '…' : "Let's go →"}
+        </button>
+      </div>
     </div>
   )
 }
