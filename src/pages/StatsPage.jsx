@@ -9,8 +9,8 @@ const BADGES = [
   { id: 'streak_3',      icon: '🔥', name: 'On Fire',         desc: '3-day tracking streak',              check: st => st.currentStreak >= 3 },
   { id: 'streak_7',      icon: '⚡', name: 'Weekly Warrior',  desc: '7-day tracking streak',              check: st => st.currentStreak >= 7 },
   { id: 'streak_30',     icon: '🏆', name: 'Iron Brewer',     desc: '30-day tracking streak',             check: st => st.currentStreak >= 30 },
-  { id: 'under_limit_3', icon: '😇', name: 'Self Control',    desc: 'Stayed under limit 3 days in a row', check: st => st.underLimitStreak >= 3 },
-  { id: 'under_limit_7', icon: '🎯', name: 'Discipline',      desc: 'Stayed under limit 7 days in a row', check: st => st.underLimitStreak >= 7 },
+  { id: 'under_limit_3', icon: '😇', name: 'Self Control',    desc: 'Stayed within budget 3 days in a row', check: st => st.underLimitStreak >= 3 },
+  { id: 'under_limit_7', icon: '🎯', name: 'Discipline',      desc: 'Stayed within budget 7 days in a row', check: st => st.underLimitStreak >= 7 },
   { id: 'early_bird',    icon: '🌅', name: 'Early Bird',      desc: 'Tracked 5 different days',           check: st => st.daysLogged >= 5 },
 ]
 
@@ -82,8 +82,8 @@ export default function StatsPage({ session }) {
     async function load() {
       const userId = session.user.id
       const { data: profile } = await supabase
-        .from('profiles').select('daily_limit').eq('id', userId).single()
-      setLimit(profile?.daily_limit ?? null)
+        .from('profiles').select('cup_budget').eq('id', userId).single()
+      setLimit(profile?.cup_budget ?? null)
       const { data } = await supabase
         .from('cup_logs').select('logged_at').eq('user_id', userId)
       setCups(data || [])
