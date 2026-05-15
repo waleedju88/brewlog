@@ -5,18 +5,34 @@ import s from './TrackerPage.module.css'
 function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
+function formatDateTime(iso) {
+  const d = new Date(iso)
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' +
+    d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+}
+function isoToLocalInput(iso) {
+  const d = new Date(iso)
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+function localInputToISO(val) {
+  return new Date(val).toISOString()
+}
 
 export default function TrackerPage({ session }) {
   const userId = session.user.id
 
-  const [budget, setBudget]     = useState(null)  // total budget
-  const [totalDrank, setTotalDrank] = useState(0) // all-time cups logged
-  const [todayCups, setTodayCups]   = useState([])// today's cups [{id, logged_at}]
-  const [loading, setLoading]   = useState(true)
-  const [popping, setPopping]   = useState(false)
-  const [showSetup, setShowSetup] = useState(false)
+  const [budget, setBudget]         = useState(null)
+  const [totalDrank, setTotalDrank] = useState(0)
+  const [todayCups, setTodayCups]   = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [popping, setPopping]       = useState(false)
+  const [showSetup, setShowSetup]   = useState(false)
   const [budgetInput, setBudgetInput] = useState('')
-  const [saving, setSaving]     = useState(false)
+  const [saving, setSaving]         = useState(false)
+  const [editingCup, setEditingCup] = useState(null)
+  const [editValue, setEditValue]   = useState('')
+  const [editSaving, setEditSaving] = useState(false)
 
   const remaining = budget !== null ? Math.max(budget - totalDrank, 0) : null
   const isDone    = budget !== null && remaining === 0
@@ -24,19 +40,15 @@ export default function TrackerPage({ session }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-
-    // Load profile
     const { data: profile } = await supabase
       .from('profiles').select('cup_budget').eq('id', userId).single()
     setBudget(profile?.cup_budget ?? null)
 
-    // Total cups ever
     const { count } = await supabase
       .from('cup_logs').select('*', { count: 'exact', head: true })
       .eq('user_id', userId)
     setTotalDrank(count || 0)
 
-    // Today's cups
     const now = new Date()
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).toISOString()
     const end   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString()
@@ -46,7 +58,6 @@ export default function TrackerPage({ session }) {
       .gte('logged_at', start).lte('logged_at', end)
       .order('logged_at', { ascending: false })
     setTodayCups(cups || [])
-
     setLoading(false)
   }, [userId])
 
@@ -84,9 +95,26 @@ export default function TrackerPage({ session }) {
     setBudgetInput('')
   }
 
+  function openEdit(cup) {
+    setEditingCup(cup)
+    setEditValue(isoToLocalInput(cup.logged_at))
+  }
+
+  async function handleSaveEdit() {
+    if (!editingCup || !editValue) return
+    setEditSaving(true)
+    const newISO = localInputToISO(editValue)
+    await supabase.from('cup_logs').update({ logged_at: newISO }).eq('id', editingCup.id)
+    setTodayCups(prev =>
+      prev.map(c => c.id === editingCup.id ? { ...c, logged_at: newISO } : c)
+        .sort((a, b) => new Date(b.logged_at) - new Date(a.logged_at))
+    )
+    setEditSaving(false)
+    setEditingCup(null)
+  }
+
   if (loading) return <PageLoader />
 
-  // First time — no budget set yet
   if (budget === null) {
     return <SetupScreen
       budgetInput={budgetInput}
@@ -98,7 +126,6 @@ export default function TrackerPage({ session }) {
 
   return (
     <div className={s.page}>
-      {/* Header */}
       <div className={s.header + ' fade-up'}>
         <p className={s.dateLabel}>
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
@@ -106,7 +133,6 @@ export default function TrackerPage({ session }) {
         <h1 className={s.title}>BrewLog</h1>
       </div>
 
-      {/* Big countdown */}
       <div className={s.counterBox + ' fade-up-2'}>
         <span
           className={s.bigNum + (popping ? ' ' + s.pop : '')}
@@ -115,15 +141,13 @@ export default function TrackerPage({ session }) {
           {remaining}
         </span>
         <p className={s.counterLabel}>
-          {isDone
-            ? 'budget reached!'
+          {isDone ? 'budget reached!'
             : remaining === 1 ? 'cup remaining in budget'
             : 'cups remaining in budget'}
         </p>
         <p className={s.subLabel}>{totalDrank} of {budget} cups used</p>
       </div>
 
-      {/* Progress arc / bar */}
       <div className={s.barWrap + ' fade-up-2'}>
         <div className={s.barTrack}>
           <div className={s.barFill} style={{
@@ -135,26 +159,23 @@ export default function TrackerPage({ session }) {
               : 'linear-gradient(90deg,var(--gold),#7b4a1e)'
           }} />
         </div>
-        <div className={s.barLabels}>
-          <span>0</span><span>{budget}</span>
-        </div>
+        <div className={s.barLabels}><span>0</span><span>{budget}</span></div>
       </div>
 
-      {/* Today's log */}
       {todayCups.length > 0 && (
         <div className={s.timeline + ' fade-up-3'}>
-          <p className={s.timelineTitle}>Today's cups</p>
+          <p className={s.timelineTitle}>Today's cups — tap to edit</p>
           {todayCups.map((cup, i) => (
-            <div key={cup.id} className={s.timelineRow}>
+            <button key={cup.id} className={s.timelineRow} onClick={() => openEdit(cup)}>
               <span className={s.timelineCup}>☕</span>
               <span className={s.timelineTime}>{formatTime(cup.logged_at)}</span>
               {i === 0 && <span className={s.latestBadge}>latest</span>}
-            </div>
+              <span className={s.editHint}>✎</span>
+            </button>
           ))}
         </div>
       )}
 
-      {/* Actions */}
       <div className={s.actions + ' fade-up-4'}>
         {!isDone ? (
           <button className={s.drinkBtn} onClick={handleDrink}>☕ I drank a cup</button>
@@ -167,11 +188,9 @@ export default function TrackerPage({ session }) {
             </button>
           </div>
         )}
-
         {todayCups.length > 0 && !isDone && (
           <button className={s.undoBtn} onClick={handleUndo}>↩ Undo last cup</button>
         )}
-
         {!isDone && (
           <button className={s.limitBtn} onClick={() => { setBudgetInput(String(budget)); setShowSetup(true) }}>
             ⚙ Change budget ({budget})
@@ -196,16 +215,40 @@ export default function TrackerPage({ session }) {
                 >{n}</button>
               ))}
             </div>
-            <input
-              className={s.modalInput} type="number" min="1"
-              placeholder="Or type any number…"
+            <input className={s.modalInput} type="number" min="1" placeholder="Or type any number…"
               value={budgetInput} onChange={e => setBudgetInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSaveBudget()}
-            />
+              onKeyDown={e => e.key === 'Enter' && handleSaveBudget()} />
             <button className={s.modalBtn} onClick={handleSaveBudget} disabled={saving}>
               {saving ? '…' : 'Save Budget'}
             </button>
             <button className={s.modalCancel} onClick={() => setShowSetup(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Edit time modal */}
+      {editingCup && (
+        <div className={s.overlay} onClick={() => setEditingCup(null)}>
+          <div className={s.modal} onClick={e => e.stopPropagation()}>
+            <h2 className={s.modalTitle}>Edit Cup Time</h2>
+            <p className={s.modalHint}>Correct the date & time for this cup</p>
+            <div className={s.editPreview}>
+              <span>☕</span>
+              <span>{formatDateTime(editingCup.logged_at)}</span>
+              <span className={s.editArrow}>→</span>
+              <span>{editValue ? formatDateTime(localInputToISO(editValue)) : '—'}</span>
+            </div>
+            <input
+              className={s.modalInput}
+              type="datetime-local"
+              value={editValue}
+              onChange={e => setEditValue(e.target.value)}
+              max={isoToLocalInput(new Date().toISOString())}
+            />
+            <button className={s.modalBtn} onClick={handleSaveEdit} disabled={editSaving}>
+              {editSaving ? '…' : '✓ Save Time'}
+            </button>
+            <button className={s.modalCancel} onClick={() => setEditingCup(null)}>Cancel</button>
           </div>
         </div>
       )}
@@ -231,12 +274,9 @@ function SetupScreen({ budgetInput, setBudgetInput, onSave, saving }) {
             >{n}</button>
           ))}
         </div>
-        <input
-          className={s.modalInput} type="number" min="1"
-          placeholder="Or type any number…"
+        <input className={s.modalInput} type="number" min="1" placeholder="Or type any number…"
           value={budgetInput} onChange={e => setBudgetInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && onSave()}
-        />
+          onKeyDown={e => e.key === 'Enter' && onSave()} />
         <button className={s.modalBtn} onClick={onSave} disabled={saving || !budgetInput}>
           {saving ? '…' : "Let's go →"}
         </button>
