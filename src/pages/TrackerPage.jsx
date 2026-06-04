@@ -15,64 +15,87 @@ function isoToLocalInput(iso) {
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-function localInputToISO(val) {
-  return new Date(val).toISOString()
-}
+function localInputToISO(val) { return new Date(val).toISOString() }
 
 export default function TrackerPage({ session }) {
   const userId = session.user.id
 
-  const [budget, setBudget]         = useState(null)
-  const [totalDrank, setTotalDrank] = useState(0)
-  const [todayCups, setTodayCups]   = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [popping, setPopping]       = useState(false)
-  const [showSetup, setShowSetup]   = useState(false)
-  const [budgetInput, setBudgetInput] = useState('')
-  const [saving, setSaving]         = useState(false)
-  const [editingCup, setEditingCup] = useState(null)
-  const [editValue, setEditValue]   = useState('')
-  const [editSaving, setEditSaving] = useState(false)
+  const [activeGoal, setActiveGoal]   = useState(null)
+  const [totalDrank, setTotalDrank]   = useState(0)
+  const [todayCups, setTodayCups]     = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [popping, setPopping]         = useState(false)
 
+  // New goal setup
+  const [showSetup, setShowSetup]     = useState(false)
+  const [budgetInput, setBudgetInput] = useState('')
+  const [titleInput, setTitleInput]   = useState('')
+  const [saving, setSaving]           = useState(false)
+
+  // Edit time
+  const [editingCup, setEditingCup]   = useState(null)
+  const [editValue, setEditValue]     = useState('')
+  const [editSaving, setEditSaving]   = useState(false)
+
+  // Close goal early
+  const [showClose, setShowClose]     = useState(false)
+  const [closing, setClosing]         = useState(false)
+
+  const budget    = activeGoal?.budget ?? null
   const remaining = budget !== null ? Math.max(budget - totalDrank, 0) : null
   const isDone    = budget !== null && remaining === 0
   const pct       = budget > 0 ? Math.min((totalDrank / budget) * 100, 100) : 0
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data: profile } = await supabase
-      .from('profiles').select('cup_budget').eq('id', userId).single()
-    setBudget(profile?.cup_budget ?? null)
+    // Get active goal
+    const { data: goals } = await supabase
+      .from('goals').select('*').eq('user_id', userId).eq('status', 'active')
+      .order('created_at', { ascending: false }).limit(1)
+    const goal = goals?.[0] ?? null
+    setActiveGoal(goal)
 
-    const { count } = await supabase
-      .from('cup_logs').select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-    setTotalDrank(count || 0)
+    if (goal) {
+      // Count all cups for this goal
+      const { count } = await supabase
+        .from('cup_logs').select('*', { count: 'exact', head: true })
+        .eq('goal_id', goal.id)
+      setTotalDrank(count || 0)
 
-    const now = new Date()
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).toISOString()
-    const end   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString()
-    const { data: cups } = await supabase
-      .from('cup_logs').select('id, logged_at')
-      .eq('user_id', userId)
-      .gte('logged_at', start).lte('logged_at', end)
-      .order('logged_at', { ascending: false })
-    setTodayCups(cups || [])
+      // Today's cups for this goal
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).toISOString()
+      const end   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString()
+      const { data: cups } = await supabase
+        .from('cup_logs').select('id, logged_at')
+        .eq('goal_id', goal.id)
+        .gte('logged_at', start).lte('logged_at', end)
+        .order('logged_at', { ascending: false })
+      setTodayCups(cups || [])
+    } else {
+      setTotalDrank(0)
+      setTodayCups([])
+    }
     setLoading(false)
   }, [userId])
 
   useEffect(() => { load() }, [load])
 
   async function handleDrink() {
-    if (isDone) return
+    if (isDone || !activeGoal) return
     const { data } = await supabase
-      .from('cup_logs').insert({ user_id: userId })
+      .from('cup_logs').insert({ user_id: userId, goal_id: activeGoal.id })
       .select('id, logged_at').single()
     if (data) {
       setTotalDrank(d => d + 1)
       setTodayCups(prev => [data, ...prev])
       setPopping(true)
       setTimeout(() => setPopping(false), 400)
+      // Auto-complete if hit budget
+      if (totalDrank + 1 >= budget) {
+        await supabase.from('goals').update({ status: 'completed', ended_at: new Date().toISOString() }).eq('id', activeGoal.id)
+        setActiveGoal(prev => ({ ...prev, status: 'completed', ended_at: new Date().toISOString() }))
+      }
     }
   }
 
@@ -84,15 +107,31 @@ export default function TrackerPage({ session }) {
     setTodayCups(prev => prev.slice(1))
   }
 
-  async function handleSaveBudget() {
+  async function handleStartGoal() {
     const n = parseInt(budgetInput)
     if (isNaN(n) || n < 1) return
     setSaving(true)
-    await supabase.from('profiles').upsert({ id: userId, cup_budget: n })
-    setBudget(n)
+    const { data } = await supabase.from('goals')
+      .insert({ user_id: userId, budget: n, title: titleInput.trim() || null })
+      .select('*').single()
+    setActiveGoal(data)
+    setTotalDrank(0)
+    setTodayCups([])
     setSaving(false)
     setShowSetup(false)
     setBudgetInput('')
+    setTitleInput('')
+  }
+
+  async function handleCloseGoal() {
+    if (!activeGoal) return
+    setClosing(true)
+    await supabase.from('goals').update({ status: 'closed', ended_at: new Date().toISOString() }).eq('id', activeGoal.id)
+    setActiveGoal(null)
+    setTotalDrank(0)
+    setTodayCups([])
+    setClosing(false)
+    setShowClose(false)
   }
 
   function openEdit(cup) {
@@ -115,12 +154,12 @@ export default function TrackerPage({ session }) {
 
   if (loading) return <PageLoader />
 
-  if (budget === null) {
+  // No active goal
+  if (!activeGoal) {
     return <SetupScreen
-      budgetInput={budgetInput}
-      setBudgetInput={setBudgetInput}
-      onSave={handleSaveBudget}
-      saving={saving}
+      budgetInput={budgetInput} setBudgetInput={setBudgetInput}
+      titleInput={titleInput} setTitleInput={setTitleInput}
+      onSave={handleStartGoal} saving={saving}
     />
   }
 
@@ -130,7 +169,8 @@ export default function TrackerPage({ session }) {
         <p className={s.dateLabel}>
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
-        <h1 className={s.title}>BrewLog</h1>
+        <h1 className={s.title}>{activeGoal.title || 'BrewLog'}</h1>
+        {activeGoal.title && <p className={s.goalSub}>Active Goal</p>}
       </div>
 
       <div className={s.counterBox + ' fade-up-2'}>
@@ -141,9 +181,9 @@ export default function TrackerPage({ session }) {
           {remaining}
         </span>
         <p className={s.counterLabel}>
-          {isDone ? 'budget reached!'
-            : remaining === 1 ? 'cup remaining in budget'
-            : 'cups remaining in budget'}
+          {isDone ? 'goal reached!'
+            : remaining === 1 ? 'cup remaining'
+            : 'cups remaining'}
         </p>
         <p className={s.subLabel}>{totalDrank} of {budget} cups used</p>
       </div>
@@ -152,10 +192,8 @@ export default function TrackerPage({ session }) {
         <div className={s.barTrack}>
           <div className={s.barFill} style={{
             width: `${pct}%`,
-            background: isDone
-              ? 'linear-gradient(90deg,var(--red),#922b21)'
-              : pct > 80
-              ? 'linear-gradient(90deg,#e67e22,#d35400)'
+            background: isDone ? 'linear-gradient(90deg,var(--red),#922b21)'
+              : pct > 80 ? 'linear-gradient(90deg,#e67e22,#d35400)'
               : 'linear-gradient(90deg,var(--gold),#7b4a1e)'
           }} />
         </div>
@@ -182,46 +220,63 @@ export default function TrackerPage({ session }) {
         ) : (
           <div className={s.doneBox}>
             <p className={s.doneEmoji}>🏁</p>
-            <p className={s.doneText}>You've finished your budget of {budget} cups!</p>
-            <button className={s.newBudgetBtn} onClick={() => { setBudgetInput(''); setShowSetup(true) }}>
-              Set a new budget
+            <p className={s.doneText}>Goal "{activeGoal.title || `${budget} cups`}" completed!</p>
+            <button className={s.newBudgetBtn} onClick={() => { setBudgetInput(''); setTitleInput(''); setShowSetup(true) }}>
+              Start new goal
             </button>
           </div>
         )}
+
         {todayCups.length > 0 && !isDone && (
           <button className={s.undoBtn} onClick={handleUndo}>↩ Undo last cup</button>
         )}
+
         {!isDone && (
-          <button className={s.limitBtn} onClick={() => { setBudgetInput(String(budget)); setShowSetup(true) }}>
-            ⚙ Change budget ({budget})
+          <button className={s.closeBtn} onClick={() => setShowClose(true)}>
+            ✕ Close this goal early
           </button>
         )}
       </div>
 
-      {/* Budget modal */}
+      {/* New goal modal */}
       {showSetup && (
         <div className={s.overlay} onClick={() => setShowSetup(false)}>
           <div className={s.modal} onClick={e => e.stopPropagation()}>
-            <h2 className={s.modalTitle}>Set Cup Budget</h2>
-            <p className={s.modalHint}>How many cups total do you want to track?</p>
+            <h2 className={s.modalTitle}>Start New Goal</h2>
+            <p className={s.modalHint}>Name it and set your cup budget</p>
+            <input className={s.modalInput} type="text" placeholder="Goal name (optional)…"
+              value={titleInput} onChange={e => setTitleInput(e.target.value)} />
             <div className={s.quickRow}>
               {[20, 30, 50, 100].map(n => (
                 <button key={n} className={s.quickBtn}
                   onClick={() => setBudgetInput(String(n))}
-                  style={{
-                    borderColor: budgetInput === String(n) ? 'var(--gold)' : undefined,
-                    color: budgetInput === String(n) ? 'var(--gold-light)' : undefined
-                  }}
+                  style={{ borderColor: budgetInput === String(n) ? 'var(--gold)' : undefined, color: budgetInput === String(n) ? 'var(--gold-light)' : undefined }}
                 >{n}</button>
               ))}
             </div>
             <input className={s.modalInput} type="number" min="1" placeholder="Or type any number…"
               value={budgetInput} onChange={e => setBudgetInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSaveBudget()} />
-            <button className={s.modalBtn} onClick={handleSaveBudget} disabled={saving}>
-              {saving ? '…' : 'Save Budget'}
+              onKeyDown={e => e.key === 'Enter' && handleStartGoal()} />
+            <button className={s.modalBtn} onClick={handleStartGoal} disabled={saving || !budgetInput}>
+              {saving ? '…' : 'Start Goal'}
             </button>
             <button className={s.modalCancel} onClick={() => setShowSetup(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Close goal early modal */}
+      {showClose && (
+        <div className={s.overlay} onClick={() => setShowClose(false)}>
+          <div className={s.modal} onClick={e => e.stopPropagation()}>
+            <h2 className={s.modalTitle}>Close Goal Early?</h2>
+            <p className={s.modalHint}>
+              You've used {totalDrank} of {budget} cups. This goal will be saved as "closed early" in your Goals history.
+            </p>
+            <button className={s.modalBtnRed} onClick={handleCloseGoal} disabled={closing}>
+              {closing ? '…' : 'Yes, close it'}
+            </button>
+            <button className={s.modalCancel} onClick={() => setShowClose(false)}>Cancel</button>
           </div>
         </div>
       )}
@@ -238,13 +293,9 @@ export default function TrackerPage({ session }) {
               <span className={s.editArrow}>→</span>
               <span>{editValue ? formatDateTime(localInputToISO(editValue)) : '—'}</span>
             </div>
-            <input
-              className={s.modalInput}
-              type="datetime-local"
-              value={editValue}
+            <input className={s.modalInput} type="datetime-local" value={editValue}
               onChange={e => setEditValue(e.target.value)}
-              max={isoToLocalInput(new Date().toISOString())}
-            />
+              max={isoToLocalInput(new Date().toISOString())} />
             <button className={s.modalBtn} onClick={handleSaveEdit} disabled={editSaving}>
               {editSaving ? '…' : '✓ Save Time'}
             </button>
@@ -256,21 +307,20 @@ export default function TrackerPage({ session }) {
   )
 }
 
-function SetupScreen({ budgetInput, setBudgetInput, onSave, saving }) {
+function SetupScreen({ budgetInput, setBudgetInput, titleInput, setTitleInput, onSave, saving }) {
   return (
     <div className={s.setupPage}>
       <div className={s.setupCard}>
         <span className={s.setupEmoji}>☕</span>
-        <h1 className={s.setupTitle}>Welcome to BrewLog</h1>
-        <p className={s.setupHint}>Set your total cup budget to get started. Every cup you log will count down from this number.</p>
+        <h1 className={s.setupTitle}>Start Your Goal</h1>
+        <p className={s.setupHint}>Give your goal a name and set how many cups you want to track.</p>
+        <input className={s.modalInput} type="text" placeholder="Goal name (optional)…"
+          value={titleInput} onChange={e => setTitleInput(e.target.value)} style={{ marginBottom: 12 }} />
         <div className={s.quickRow} style={{ justifyContent: 'center', marginBottom: 16 }}>
           {[20, 30, 50, 100].map(n => (
             <button key={n} className={s.quickBtn}
               onClick={() => setBudgetInput(String(n))}
-              style={{
-                borderColor: budgetInput === String(n) ? 'var(--gold)' : undefined,
-                color: budgetInput === String(n) ? 'var(--gold-light)' : undefined
-              }}
+              style={{ borderColor: budgetInput === String(n) ? 'var(--gold)' : undefined, color: budgetInput === String(n) ? 'var(--gold-light)' : undefined }}
             >{n}</button>
           ))}
         </div>

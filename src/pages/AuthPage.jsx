@@ -13,7 +13,6 @@ export default function AuthPage() {
   async function handleSubmit() {
     setError(''); setSuccess(''); setLoading(true)
     if (!email || !password) { setError('Please fill in all fields.'); setLoading(false); return }
-
     if (mode === 'signup') {
       const { error: e } = await supabase.auth.signUp({ email, password })
       if (e) setError(e.message)
@@ -34,12 +33,10 @@ export default function AuthPage() {
           <h1 className={s.brand}>BrewLog</h1>
           <p className={s.tagline}>Your personal coffee journal</p>
         </div>
-
         <div className={s.tabs}>
           <button className={mode === 'login' ? s.tabActive : s.tab} onClick={() => { setMode('login'); setError(''); setSuccess('') }}>Sign In</button>
           <button className={mode === 'signup' ? s.tabActive : s.tab} onClick={() => { setMode('signup'); setError(''); setSuccess('') }}>Create Account</button>
         </div>
-
         <div className={s.form}>
           <label className={s.label}>Email</label>
           <input className={s.input} type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSubmit()} autoComplete="email" />

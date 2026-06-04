@@ -22,15 +22,13 @@ function isoToLocalInput(iso) {
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-function localInputToISO(val) {
-  return new Date(val).toISOString()
-}
+function localInputToISO(val) { return new Date(val).toISOString() }
 
 export default function HistoryPage({ session }) {
-  const [allCups, setAllCups]   = useState([])
-  const [budget, setBudget]     = useState(null)
-  const [loading, setLoading]   = useState(true)
-  const [expanded, setExpanded] = useState(null)
+  const [allCups, setAllCups]     = useState([])
+  const [activeGoal, setActiveGoal] = useState(null)
+  const [loading, setLoading]     = useState(true)
+  const [expanded, setExpanded]   = useState(null)
   const [editingCup, setEditingCup] = useState(null)
   const [editValue, setEditValue]   = useState('')
   const [editSaving, setEditSaving] = useState(false)
@@ -38,25 +36,26 @@ export default function HistoryPage({ session }) {
   useEffect(() => {
     async function load() {
       const userId = session.user.id
-      const { data: profile } = await supabase
-        .from('profiles').select('cup_budget').eq('id', userId).single()
-      setBudget(profile?.cup_budget ?? null)
+      const { data: goals } = await supabase
+        .from('goals').select('*').eq('user_id', userId).eq('status', 'active')
+        .order('created_at', { ascending: false }).limit(1)
+      const goal = goals?.[0] ?? null
+      setActiveGoal(goal)
 
-      const { data } = await supabase
-        .from('cup_logs').select('id, logged_at')
-        .eq('user_id', userId)
-        .order('logged_at', { ascending: false })
-        .limit(500)
-      setAllCups(data || [])
-
-      // Auto-expand today
-      if (data && data.length > 0) setExpanded(localDateKey(data[0].logged_at))
+      if (goal) {
+        const { data } = await supabase
+          .from('cup_logs').select('id, logged_at')
+          .eq('goal_id', goal.id)
+          .order('logged_at', { ascending: false })
+          .limit(500)
+        setAllCups(data || [])
+        if (data && data.length > 0) setExpanded(localDateKey(data[0].logged_at))
+      }
       setLoading(false)
     }
     load()
   }, [session])
 
-  // Group cups by local date
   const grouped = (() => {
     const map = {}
     for (const cup of allCups) {
@@ -90,23 +89,27 @@ export default function HistoryPage({ session }) {
   return (
     <div className={s.page}>
       <div className={s.header + ' fade-up'}>
-        <p className={s.sub}>Every cup logged</p>
+        <p className={s.sub}>{activeGoal ? (activeGoal.title || 'Active goal') : 'No active goal'}</p>
         <h1 className={s.title}>History</h1>
       </div>
 
-      {grouped.length === 0 ? (
+      {!activeGoal ? (
         <div className={s.empty + ' fade-up-2'}>
           <span>📅</span>
-          <p>No logs yet. Start tracking today!</p>
+          <p>No active goal. Start one from the Today tab!</p>
+        </div>
+      ) : grouped.length === 0 ? (
+        <div className={s.empty + ' fade-up-2'}>
+          <span>☕</span>
+          <p>No cups logged yet for this goal.</p>
         </div>
       ) : (
         <div className={s.list + ' fade-up-2'}>
           {grouped.map((day, i) => {
-            const count   = day.cups.length
-            const isOpen  = expanded === day.key
+            const count  = day.cups.length
+            const isOpen = expanded === day.key
             const dateLabel = new Date(day.cups[0].logged_at)
               .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-
             return (
               <div key={day.key} className={s.group} style={{ animationDelay: `${i * 0.04}s` }}>
                 <button className={s.dayHeader} onClick={() => setExpanded(isOpen ? null : day.key)}>
@@ -124,7 +127,6 @@ export default function HistoryPage({ session }) {
                     <span className={s.chevron}>{isOpen ? '▲' : '▼'}</span>
                   </div>
                 </button>
-
                 {isOpen && (
                   <div className={s.cupList}>
                     {day.cups.map((cup, j) => (
@@ -146,7 +148,6 @@ export default function HistoryPage({ session }) {
         </div>
       )}
 
-      {/* Edit time modal */}
       {editingCup && (
         <div className={s.overlay} onClick={() => setEditingCup(null)}>
           <div className={s.modal} onClick={e => e.stopPropagation()}>
@@ -158,13 +159,9 @@ export default function HistoryPage({ session }) {
               <span className={s.editArrow}>→</span>
               <span>{editValue ? formatDateTime(localInputToISO(editValue)) : '—'}</span>
             </div>
-            <input
-              className={s.modalInput}
-              type="datetime-local"
-              value={editValue}
+            <input className={s.modalInput} type="datetime-local" value={editValue}
               onChange={e => setEditValue(e.target.value)}
-              max={isoToLocalInput(new Date().toISOString())}
-            />
+              max={isoToLocalInput(new Date().toISOString())} />
             <button className={s.modalBtn} onClick={handleSaveEdit} disabled={editSaving}>
               {editSaving ? '…' : '✓ Save Time'}
             </button>
@@ -177,9 +174,7 @@ export default function HistoryPage({ session }) {
 }
 
 function Loader() {
-  return (
-    <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: 28, height: 28, border: '3px solid rgba(200,130,60,0.3)', borderTopColor: 'var(--gold)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-    </div>
-  )
+  return <div style={{ height:'60vh', display:'flex', alignItems:'center', justifyContent:'center' }}>
+    <div style={{ width:28, height:28, border:'3px solid rgba(200,130,60,0.3)', borderTopColor:'var(--gold)', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
+  </div>
 }

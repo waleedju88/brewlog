@@ -20,6 +20,15 @@ function IconHistory() {
     </svg>
   )
 }
+function IconGoals() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <circle cx="12" cy="12" r="6"/>
+      <circle cx="12" cy="12" r="2"/>
+    </svg>
+  )
+}
 function IconStats() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -41,6 +50,7 @@ function IconSettings() {
 const NAV = [
   { to: '/',         label: 'Today',    Icon: IconToday    },
   { to: '/history',  label: 'History',  Icon: IconHistory  },
+  { to: '/goals',    label: 'Goals',    Icon: IconGoals    },
   { to: '/stats',    label: 'Stats',    Icon: IconStats    },
   { to: '/settings', label: 'Settings', Icon: IconSettings },
 ]

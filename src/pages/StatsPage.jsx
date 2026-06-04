@@ -13,137 +13,74 @@ const BADGES = [
   { id: 'under_limit_7', icon: '🎯', name: 'Discipline',      desc: 'Stayed within budget 7 days in a row',check: st => st.underLimitStreak >= 7 },
   { id: 'early_bird',    icon: '🌅', name: 'Early Bird',      desc: 'Tracked 5 different days',            check: st => st.daysLogged >= 5 },
 ]
-
 function localDateKey(iso) {
   const d = new Date(iso)
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
-
-function computeStats(cups, budget) {
+function computeStats(cups) {
   const total = cups.length
   const byDay = {}
-  for (const c of cups) {
-    const k = localDateKey(c.logged_at)
-    byDay[k] = (byDay[k] || 0) + 1
-  }
+  for (const c of cups) { const k = localDateKey(c.logged_at); byDay[k] = (byDay[k]||0)+1 }
   const days = Object.keys(byDay).sort()
   const daysLogged = days.length
-  const avg = daysLogged > 0 ? (total / daysLogged).toFixed(1) : 0
-
-  let longestStreak = 0, temp = 0, bestUnder = 0, tempUnder = 0
-  for (let i = 0; i < days.length; i++) {
-    const prev = i > 0 ? new Date(days[i-1] + 'T12:00:00') : null
-    const curr = new Date(days[i] + 'T12:00:00')
-    const consecutive = prev ? (curr - prev) / 86400000 === 1 : true
-    temp = consecutive ? temp + 1 : 1
-    longestStreak = Math.max(longestStreak, temp)
-    if (budget !== null && byDay[days[i]] <= budget) {
-      tempUnder = consecutive ? tempUnder + 1 : 1
-      bestUnder = Math.max(bestUnder, tempUnder)
-    } else { tempUnder = 0 }
+  const avg = daysLogged > 0 ? (total/daysLogged).toFixed(1) : 0
+  let longestStreak=0, temp=0, bestUnder=0, tempUnder=0
+  for (let i=0;i<days.length;i++) {
+    const prev = i>0?new Date(days[i-1]+'T12:00:00'):null
+    const curr = new Date(days[i]+'T12:00:00')
+    const consec = prev?(curr-prev)/86400000===1:true
+    temp = consec?temp+1:1
+    longestStreak = Math.max(longestStreak,temp)
+    tempUnder = consec?tempUnder+1:1
+    bestUnder = Math.max(bestUnder,tempUnder)
   }
-
-  let currentStreak = 0
-  const daySet = new Set(days)
-  const check = new Date()
-  while (true) {
-    const k = `${check.getFullYear()}-${String(check.getMonth()+1).padStart(2,'0')}-${String(check.getDate()).padStart(2,'0')}`
-    if (daySet.has(k)) { currentStreak++; check.setDate(check.getDate() - 1) } else break
+  let currentStreak=0
+  const daySet=new Set(days), check=new Date()
+  while(true){
+    const k=`${check.getFullYear()}-${String(check.getMonth()+1).padStart(2,'0')}-${String(check.getDate()).padStart(2,'0')}`
+    if(daySet.has(k)){currentStreak++;check.setDate(check.getDate()-1)}else break
   }
-
-  const hourCount = Array(24).fill(0)
-  for (const c of cups) hourCount[new Date(c.logged_at).getHours()]++
-  const peakHour = hourCount.indexOf(Math.max(...hourCount))
-  const peakLabel = cups.length > 0
-    ? new Date(2000, 0, 1, peakHour).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })
-    : '—'
-
-  return { total, daysLogged, currentStreak, longestStreak, underLimitStreak: bestUnder, avg, peakLabel }
+  const hourCount=Array(24).fill(0)
+  for(const c of cups) hourCount[new Date(c.logged_at).getHours()]++
+  const peakHour=hourCount.indexOf(Math.max(...hourCount))
+  const peakLabel=cups.length>0?new Date(2000,0,1,peakHour).toLocaleTimeString('en-US',{hour:'numeric',hour12:true}):'—'
+  return {total,daysLogged,currentStreak,longestStreak,underLimitStreak:bestUnder,avg,peakLabel}
 }
 
 export default function StatsPage({ session }) {
-  const [cups, setCups]   = useState([])
-  const [budget, setBudget] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    async function load() {
-      const userId = session.user.id
-      const { data: profile } = await supabase
-        .from('profiles').select('cup_budget').eq('id', userId).single()
-      setBudget(profile?.cup_budget ?? null)
-      const { data } = await supabase
-        .from('cup_logs').select('logged_at').eq('user_id', userId)
-      setCups(data || [])
-      setLoading(false)
+  const [cups,setCups]=useState([])
+  const [loading,setLoading]=useState(true)
+  useEffect(()=>{
+    async function load(){
+      const {data}=await supabase.from('cup_logs').select('logged_at').eq('user_id',session.user.id)
+      setCups(data||[]);setLoading(false)
     }
     load()
-  }, [session])
-
-  if (loading) return <Loader />
-
-  const st = computeStats(cups, budget)
-  const unlocked = BADGES.filter(b => b.check(st))
-  const locked   = BADGES.filter(b => !b.check(st))
-
+  },[session])
+  if(loading) return <Loader/>
+  const st=computeStats(cups)
+  const unlocked=BADGES.filter(b=>b.check(st))
+  const locked=BADGES.filter(b=>!b.check(st))
   return (
     <div className={s.page}>
-      <div className={s.header + ' fade-up'}>
-        <p className={s.sub}>All time</p>
-        <h1 className={s.title}>Your Stats</h1>
+      <div className={s.header+' fade-up'}><p className={s.sub}>All time</p><h1 className={s.title}>Your Stats</h1></div>
+      <div className={s.grid+' fade-up-2'}>
+        <StatCard label="Total Cups" value={st.total} icon="☕"/>
+        <StatCard label="Days Tracked" value={st.daysLogged} icon="📅"/>
+        <StatCard label="Avg / Day" value={st.avg} icon="📈"/>
+        <StatCard label="Peak Hour" value={st.peakLabel} icon="⏰" small/>
+        <StatCard label="Current Streak" value={`${st.currentStreak}d`} icon="🔥"/>
+        <StatCard label="Longest Streak" value={`${st.longestStreak}d`} icon="⚡"/>
       </div>
-      <div className={s.grid + ' fade-up-2'}>
-        <StatCard label="Total Cups"     value={st.total}               icon="☕" />
-        <StatCard label="Days Tracked"   value={st.daysLogged}          icon="📅" />
-        <StatCard label="Avg / Day"      value={st.avg}                 icon="📈" />
-        <StatCard label="Peak Hour"      value={st.peakLabel}           icon="⏰" small />
-        <StatCard label="Current Streak" value={`${st.currentStreak}d`} icon="🔥" />
-        <StatCard label="Longest Streak" value={`${st.longestStreak}d`} icon="⚡" />
-        {budget && <StatCard label="Cup Budget" value={budget} icon="🎯" />}
-      </div>
-      <div className={s.badgeSection + ' fade-up-3'}>
+      <div className={s.badgeSection+' fade-up-3'}>
         <h2 className={s.sectionTitle}>Badges</h2>
-        {unlocked.length > 0 && <>
-          <p className={s.badgeSub}>Earned</p>
-          <div className={s.badgeGrid}>
-            {unlocked.map(b => (
-              <div key={b.id} className={s.badge}>
-                <span className={s.badgeIcon}>{b.icon}</span>
-                <p className={s.badgeName}>{b.name}</p>
-                <p className={s.badgeDesc}>{b.desc}</p>
-              </div>
-            ))}
-          </div>
-        </>}
-        {locked.length > 0 && <>
-          <p className={s.badgeSub} style={{ marginTop: unlocked.length ? 20 : 0 }}>Locked</p>
-          <div className={s.badgeGrid}>
-            {locked.map(b => (
-              <div key={b.id} className={s.badge + ' ' + s.badgeLocked}>
-                <span className={s.badgeIcon} style={{ filter: 'grayscale(1) opacity(0.4)' }}>{b.icon}</span>
-                <p className={s.badgeName}>{b.name}</p>
-                <p className={s.badgeDesc}>{b.desc}</p>
-              </div>
-            ))}
-          </div>
-        </>}
+        {unlocked.length>0&&<><p className={s.badgeSub}>Earned</p><div className={s.badgeGrid}>{unlocked.map(b=><div key={b.id} className={s.badge}><span className={s.badgeIcon}>{b.icon}</span><p className={s.badgeName}>{b.name}</p><p className={s.badgeDesc}>{b.desc}</p></div>)}</div></>}
+        {locked.length>0&&<><p className={s.badgeSub} style={{marginTop:unlocked.length?20:0}}>Locked</p><div className={s.badgeGrid}>{locked.map(b=><div key={b.id} className={s.badge+' '+s.badgeLocked}><span className={s.badgeIcon} style={{filter:'grayscale(1) opacity(0.4)'}}>{b.icon}</span><p className={s.badgeName}>{b.name}</p><p className={s.badgeDesc}>{b.desc}</p></div>)}</div></>}
       </div>
     </div>
   )
 }
-
-function StatCard({ label, value, icon, small }) {
-  return (
-    <div className={s.statCard}>
-      <span className={s.statIcon}>{icon}</span>
-      <p className={s.statValue} style={{ fontSize: small ? '22px' : undefined }}>{value}</p>
-      <p className={s.statLabel}>{label}</p>
-    </div>
-  )
+function StatCard({label,value,icon,small}){
+  return <div className={s.statCard}><span className={s.statIcon}>{icon}</span><p className={s.statValue} style={{fontSize:small?'22px':undefined}}>{value}</p><p className={s.statLabel}>{label}</p></div>
 }
-
-function Loader() {
-  return <div style={{ height:'60vh', display:'flex', alignItems:'center', justifyContent:'center' }}>
-    <div style={{ width:28, height:28, border:'3px solid rgba(200,130,60,0.3)', borderTopColor:'var(--gold)', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
-  </div>
-}
+function Loader(){return <div style={{height:'60vh',display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:28,height:28,border:'3px solid rgba(200,130,60,0.3)',borderTopColor:'var(--gold)',borderRadius:'50%',animation:'spin 0.8s linear infinite'}}/></div>}
